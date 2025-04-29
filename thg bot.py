@@ -109,8 +109,8 @@ def parse_tributes(session_data):
 
     return players, player_pronouns
 
-
 def calculateRound(players, player_pronouns, round_number, session_data):
+
     playercount = len(players)
     deaths = 0
     outcome = ""
@@ -119,73 +119,81 @@ def calculateRound(players, player_pronouns, round_number, session_data):
     surviving_players = players.copy()
     used_players = set()
 
-    if 'no_death_count' not in session_data:
-        session_data['no_death_count'] = 0
-    if 'round_deaths' not in session_data:
-        session_data['round_deaths'] = []
-    if 'all_deaths' not in session_data:
-        session_data['all_deaths'] = []
+    session_data.setdefault('no_death_count', 0)
+    session_data.setdefault('round_deaths', [])
+    session_data.setdefault('all_deaths', [])
+    session_data.setdefault('kills', {})
+    session_data.setdefault('placements', [])
 
     no_death_count = session_data['no_death_count']
-    round_deaths = session_data['round_deaths']
 
-    # If it's a recap round
+    # Check for recap round
     if round_number % 5 == 0:
-        description = f"🏹 ROUND RECAP 🏹\n"
-        description += f"## 💥 {len(round_deaths)} cannon shot{'s' if len(round_deaths) != 1 else ''} can be heard in the distance\n"
-        for death in round_deaths:
-            description += f"- ☠️ {death}\n"
-
+        description = f"## 💥 {len(session_data['round_deaths'])} cannon shot{'s' if len(session_data['round_deaths']) != 1 else ''} can be heard in the distance\n"
+        for death in session_data['round_deaths']:
+            description += f"☠️ {death}\n"
         description += f"\n## 💫 Survivors\n"
         for player in surviving_players:
-            description += f"- 💫 {player}\n"
-
+            description += f"💫 {player}\n"
         description += "\n📜 *The games will continue in the coming rounds, prepare tributes.*\n"
-
-        # Optional: add a random lore footer
-        
-
+        footer = random.choice([
+            "A whisper of rebellion rustled through the trees...",
+            "A cannon echoed like thunder across the arena...",
+            "Somewhere, a sponsor tightened their grip on a gift...",
+            "Eyes in the sky watched without blinking..."
+        ])
         session_data['round_deaths'] = []
+        return 'recap', description, footer
 
-        return description
-
+    # Adjusted death chances
     if no_death_count >= threshold_without_deaths:
-        deaths = random.choices([1, 2], weights=[70, 30], k=1)[0]
+        deaths = random.choices([0, 1], weights=[60, 40], k=1)[0]
         session_data['no_death_count'] = 0
     else:
-        deaths = random.choices([0, 1, 2], weights=[50, 40, 10], k=1)[0]
+        deaths = random.choices([0, 1, 2], weights=[70, 25, 5], k=1)[0]
+
+    max_possible_deaths = len(surviving_players) - 1
+    deaths = min(deaths, max_possible_deaths) if max_possible_deaths > 0 else 0
 
     if deaths > 0:
         session_data['no_death_count'] = 0
-        for part in range(deaths):
+        for _ in range(deaths):
             death_event = random.choice(deathlist)
-            type_of_death = death_event.split("|")[0]
-            death_description = death_event.split("|")[1]
+            type_of_death, death_description = death_event.split("|", 1)
 
-            if type_of_death == "S":
+            if type_of_death == "S" and len(surviving_players) >= 1:
                 player1 = random.choice(surviving_players)
-                surviving_players.remove(player1)  # Ensure the player is fully removed
+                surviving_players.remove(player1)
                 used_players.add(player1)
                 outcome += death_description.format(player1=player1, pronoun=player_pronouns[player1][0]) + "\n"
                 session_data['round_deaths'].append(f"{player1} > District ??")
+                session_data['placements'].insert(0, {
+                    'name': player1,
+                    'district': '??',
+                    'kills': session_data['kills'].get(player1, 0)
+                })
 
-            elif type_of_death == "M":
-                if len(surviving_players) >= 2:
-                    player1 = random.choice(surviving_players)
-                    surviving_players.remove(player1)
-                    used_players.add(player1)
-                    player2 = random.choice(surviving_players)
-                    surviving_players.remove(player2)
-                    used_players.add(player2)
-                    outcome += death_description.format(
-                        player1=player1, player2=player2,
-                        pronoun1=player_pronouns.get(player1, ('they',))[0],
-                        pronoun2=player_pronouns.get(player2, ('they',))[0]
-                    ) + "\n"
-                    session_data['round_deaths'].append(f"{player1} > District ??")
-                    session_data['round_deaths'].append(f"{player2} > District ??")
+            elif type_of_death == "M" and len(surviving_players) >= 2:
+                player1 = random.choice(surviving_players)
+                surviving_players.remove(player1)
+                used_players.add(player1)
+                player2 = random.choice(surviving_players)
+                surviving_players.remove(player2)
+                used_players.add(player2)
+                outcome += death_description.format(
+                    player1=player1, player2=player2,
+                    pronoun1=player_pronouns[player1][0],
+                    pronoun2=player_pronouns[player2][0]
+                ) + "\n"
+                for p in (player1, player2):
+                    session_data['round_deaths'].append(f"{p} > District ??")
+                    session_data['placements'].insert(0, {
+                        'name': p,
+                        'district': '??',
+                        'kills': session_data['kills'].get(p, 0)
+                    })
 
-            elif type_of_death == "A":
+            elif type_of_death == "A" and len(surviving_players) >= 2:
                 player1 = random.choice(surviving_players)
                 surviving_players.remove(player1)
                 used_players.add(player1)
@@ -195,12 +203,17 @@ def calculateRound(players, player_pronouns, round_number, session_data):
                     surviving_players.remove(dp)
                     used_players.add(dp)
                 outcome += " ▶ " + death_description.format(
-                    player1=player1, players=", ".join(dead_players),
-                    pronoun1=player_pronouns.get(player1, ('they',))[0]
+                    player1=player1,
+                    players=", ".join(dead_players),
+                    pronoun1=player_pronouns[player1][0]
                 ) + "\n\n"
-                session_data['round_deaths'].append(f"{player1} > District ??")
-                for dp in dead_players:
-                    session_data['round_deaths'].append(f"{dp} > District ??")
+                for p in [player1] + dead_players:
+                    session_data['round_deaths'].append(f"{p} > District ??")
+                    session_data['placements'].insert(0, {
+                        'name': p,
+                        'district': '??',
+                        'kills': session_data['kills'].get(p, 0)
+                    })
 
         session_data['all_deaths'].extend(session_data['round_deaths'])
 
@@ -211,13 +224,11 @@ def calculateRound(players, player_pronouns, round_number, session_data):
 
         action_entry = random.choice(actionlist)
         _, action_text = action_entry.split("|", 1)
-        action_text = action_text.strip()
 
         if "{Player1}" in action_text and "{Player2}" in action_text:
-            remaining_players = [p for p in surviving_players if p != player and p not in used_players]
-            if remaining_players:
-                player2 = random.choice(remaining_players)
-                used_players.add(player2)
+            remaining = [p for p in surviving_players if p != player and p not in used_players]
+            if remaining:
+                player2 = random.choice(remaining)
             else:
                 player2 = player
             action_text = action_text.replace("{Player1}", player).replace("{Player2}", player2)
@@ -226,23 +237,28 @@ def calculateRound(players, player_pronouns, round_number, session_data):
             action_text = action_text.replace("{Player1}", player)
 
         used_players.add(player)
-        outcome += f" ▷ {action_text}\n\n"
+        outcome += f"▷ {action_text.strip()}\n\n"
 
     session_data['no_death_count'] += 1
 
-    lore_snippets = [
-            "A whisper of rebellion rustled through the trees...",
-            "A cannon echoed like thunder across the arena...",
-            "Somewhere, a sponsor tightened their grip on a gift...",
-            "Eyes in the sky watched without blinking..."
-        ]
-        
-    description = f"{random.choice(lore_snippets)}\n\n"
-    description += outcome
+    # Check win
+    if len(surviving_players) == 1:
+        winner = surviving_players[0]
+        session_data['placements'].insert(0, {
+            'name': winner,
+            'district': '??',
+            'kills': session_data['kills'].get(winner, 0)
+        })
 
-    return description
+        description = "🎉 **The Hunger Games Is Over!** 🎉\n\n"
+        description += f"🏆 {winner} from District ?? is the victor!\n\n"
+        description += "## Final Placements:\n"
+        for i, data in enumerate(session_data['placements'], 1):
+            description += f"**{i})** {data['name']} | District {data['district']} | {data['kills']} kill(s)\n"
 
+        return 'win', description, None
 
+    return 'normal', outcome.strip(), None
 
 class ContinueButton(discord.ui.View):
     def __init__(self, owner_id, user_id, message_id, thread_id):
